@@ -9,10 +9,13 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-rental}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置数据库密码}
     ports:
+      # 数据库只向宿主机本地开放；backend 通过 Compose 网络访问 postgres:5432。
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
+      # 数据与容器生命周期分离，普通重建或 down 后仍保留。
       - pgdata:/var/lib/postgresql/data
     healthcheck:
+      # pg_isready 检查数据库是否接受连接；账号密码与查询链路由后端健康接口验证。
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 5s
@@ -29,6 +32,7 @@ services:
     image: rental-info-sharing-backend:0.0.1
     restart: unless-stopped
     environment:
+      # 容器内 localhost 指向自身，因此数据源必须使用 PostgreSQL 服务名。
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-rental}?connectTimeout=3&socketTimeout=5
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-rental}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置数据库密码}
@@ -36,9 +40,11 @@ services:
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
     depends_on:
+      # 等数据库就绪后再启动，后端启动过程中自动校验并执行 Flyway 迁移。
       postgres:
         condition: service_healthy
     healthcheck:
+      # 接口执行真实 SELECT 1；数据库不可用时返回 503，curl --fail 会使检查失败。
       test: ["CMD", "curl", "--fail", "--silent", "--max-time", "8", "http://127.0.0.1:8080/api/v1/health"]
       interval: 10s
       timeout: 10s
@@ -47,6 +53,7 @@ services:
     stop_grace_period: 30s
 
   migrate:
+    # 独立迁移工具按需运行；日常 up 不启用 tools profile，避免与后端同时迁移。
     image: ${FLYWAY_IMAGE:-docker.m.daocloud.io/flyway/flyway:13.10.0-alpine}
     profiles: ["tools"]
     command: ["migrate"]
@@ -61,6 +68,7 @@ services:
       FLYWAY_CLEAN_DISABLED: "true"
       FLYWAY_CONNECT_RETRIES: "10"
     volumes:
+      # 只读挂载与后端相同的迁移目录，共用数据库中的 Flyway 版本历史。
       - ./src/main/resources/db/migration:/flyway/sql:ro
     depends_on:
       postgres:
