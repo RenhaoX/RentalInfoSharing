@@ -1,43 +1,58 @@
 spring:
   application:
     name: rental-info-sharing
+  # Compose 注入容器内连接地址；默认 localhost 地址用于 IDE 调试。
   datasource:
+    # PostgreSQL JDBC 的连接超时和读取超时单位均为秒。
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/rental?connectTimeout=3&socketTimeout=5}
     username: ${SPRING_DATASOURCE_USERNAME:rental}
+    # 密码必须由环境变量提供，不在代码或镜像中设置默认值。
     password: ${SPRING_DATASOURCE_PASSWORD}
     driver-class-name: org.postgresql.Driver
+    # Hikari 连接池超时单位为毫秒；连接耗尽时及时失败，避免请求长时间等待。
     hikari:
       maximum-pool-size: 10
       minimum-idle: 1
       connection-timeout: 3000
       validation-timeout: 1000
+  # 启动时校验并执行版本化迁移，沿用 public 中已有的迁移历史。
   flyway:
     enabled: true
     locations: classpath:db/migration
     default-schema: public
     schemas: public
+    # 遇到没有迁移历史的非空库时不自动接管，须先确认数据库来源。
     baseline-on-migrate: false
+    # 禁用清库操作，防止误删除持久化数据。
     clean-disabled: true
+    # 执行新迁移前校验已有脚本，已执行版本不能通过修改原文件升级。
     validate-on-migrate: true
   jackson:
+    # Jackson 默认时区使用 UTC，与项目的时间处理约定保持一致。
     time-zone: UTC
 
 server:
   port: ${SERVER_PORT:8080}
+  # 容器停止时等待正在处理的请求结束，配合 Compose 的停止宽限期。
   shutdown: graceful
   error:
+    # Spring Boot 默认错误响应也不输出异常消息或堆栈。
     include-message: never
     include-stacktrace: never
 
 mybatis-plus:
   configuration:
+    # 将数据库 created_at 等列名映射到 Java 的 createdAt 属性。
     map-underscore-to-camel-case: true
+    # SQL 语句执行超时，单位为秒。
     default-statement-timeout: 5
   global-config:
     banner: false
     db-config:
+      # 主键由 PostgreSQL 的 BIGSERIAL / 序列生成。
       id-type: auto
 
 logging:
   pattern:
+    # MDC 中的 traceId 由请求过滤器写入，用于按响应标识定位服务端日志。
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] [traceId=%X{traceId:-}] %logger{36} - %msg%n"

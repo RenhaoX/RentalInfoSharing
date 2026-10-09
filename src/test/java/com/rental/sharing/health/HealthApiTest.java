@@ -26,6 +26,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+/**
+ * 在 MVC 测试上下文中验证统一响应、HTTP 错误映射、参数校验和 traceId。
+ * 保留真实 HealthService，仅替换数据库 Mapper，测试不依赖外部 PostgreSQL。
+ */
 @WebMvcTest(HealthController.class)
 @Import({HealthService.class, GlobalExceptionHandler.class, TraceIdFilter.class, HealthApiTest.ValidationController.class})
 class HealthApiTest {
@@ -113,6 +117,7 @@ class HealthApiTest {
                 .andExpect(jsonPath("$.code").value(41500));
     }
 
+    /** 仅在测试上下文中注册，用于验证请求体校验，不提供生产接口。 */
     @RestController
     static class ValidationController {
 

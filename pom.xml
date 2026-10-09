@@ -3,6 +3,7 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
+    <!-- 由 Spring Boot 管理常用依赖和插件版本，减少版本组合冲突。 -->
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
@@ -17,27 +18,33 @@
     <properties>
         <java.version>21</java.version>
         <mybatis-plus.version>3.5.17</mybatis-plus.version>
+        <!-- 与 Compose 中独立迁移工具的版本保持一致。 -->
         <flyway.version>13.10.0</flyway.version>
     </properties>
     <dependencies>
+        <!-- REST 接口、JSON 序列化与内嵌 Web 容器。 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
+        <!-- 支持请求参数上的 Jakarta Validation 约束。 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
+        <!-- 已包含 MyBatis 集成，后续无需重复添加 MyBatis Starter。 -->
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
             <version>${mybatis-plus.version}</version>
         </dependency>
+        <!-- PostgreSQL JDBC 驱动随应用打包，在运行时加载。 -->
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
         </dependency>
+        <!-- Flyway 核心及 PostgreSQL 支持模块，启动时管理版本化数据库结构。 -->
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>
@@ -47,6 +54,7 @@
             <artifactId>flyway-database-postgresql</artifactId>
             <version>${flyway.version}</version>
         </dependency>
+        <!-- JUnit、MockMvc 和 Mockito 等测试工具，不进入运行时依赖。 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -54,6 +62,7 @@
         </dependency>
     </dependencies>
     <build>
+        <!-- 固定 JAR 名称，与 Dockerfile 构建阶段的复制路径一致。 -->
         <finalName>rental-info-sharing</finalName>
         <plugins>
             <plugin>

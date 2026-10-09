@@ -2,6 +2,10 @@ package com.rental.sharing.common.api;
 
 import org.springframework.http.HttpStatus;
 
+/**
+ * 公共错误码，同时定义 HTTP 状态与默认对外提示。
+ * 当前五位错误码以对应的 HTTP 状态作为前三位，便于识别错误类别。
+ */
 public enum ErrorCode {
     BAD_REQUEST(40000, HttpStatus.BAD_REQUEST, "请求参数不合法"),
     NOT_FOUND(40400, HttpStatus.NOT_FOUND, "请求的资源不存在"),
@@ -32,6 +36,10 @@ public enum ErrorCode {
         return message;
     }
 
+    /**
+     * 将 Spring MVC 请求异常的 HTTP 状态映射为公共错误码。
+     * 未单独定义的状态使用通用错误码，实际 HTTP 状态仍由异常处理器保留。
+     */
     public static ErrorCode fromHttpStatus(int status) {
         return switch (status) {
             case 404 -> NOT_FOUND;
