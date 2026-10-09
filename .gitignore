@@ -1,0 +1,8 @@
+.DS_Store
+.tools/
+.env
+.env.*
+!.env.example
+backups/
+target/
+node_modules/

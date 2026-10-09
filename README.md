@@ -100,7 +100,7 @@
 ```
 RentalInfoSharing/
 ├── README.md
-├── docker-compose.yml              # 统一容器编排，当前包含 PostgreSQL
+├── docker-compose.yml              # PostgreSQL 与 Flyway 迁移工具
 ├── .env.example                    # 部署配置模板，实际密码放在 .env
 ├── pom.xml
 └── src/main/java/com/rental/sharing/
@@ -142,10 +142,10 @@ RentalInfoSharing/
 ### 6.1 ER 关系
 
 ```
-users 1 ──── n user_bindings         （账号 ↔ 手机号/邮箱绑定）
+users 1 ──── n user_bindings         （每个账号最多一个手机号和一个邮箱）
 users 1 ──── n refresh_tokens        （登录会话）
 users 1 ──── n rental_records        （用户发布的租房记录）
-users 1 ──── n verification_codes    （验证码, 实际按 target 关联）
+verification_codes 按 scene + target 查询（验证码不直接关联 users）
 ```
 
 ### 6.2 表结构
@@ -159,8 +159,8 @@ users 1 ──── n verification_codes    （验证码, 实际按 target 关�
 | password_hash | VARCHAR(100) | NOT NULL | BCrypt |
 | nickname | VARCHAR(32) | | 昵称 |
 | avatar_url | VARCHAR(255) | | 预留 |
-| status | SMALLINT | DEFAULT 1 | 1 正常 / 0 禁用 |
-| created_at / updated_at | TIMESTAMPTZ | NOT NULL DEFAULT now() | |
+| status | SMALLINT | NOT NULL DEFAULT 1, CHECK 0/1 | 1 正常 / 0 禁用 |
+| created_at / updated_at | TIMESTAMPTZ | NOT NULL DEFAULT now() | updated_at 由触发器维护 |
 
 **user_bindings 绑定表**（登录凭证 & 联系方式）
 
@@ -168,24 +168,25 @@ users 1 ──── n verification_codes    （验证码, 实际按 target 关�
 | --- | --- | --- | --- |
 | id | BIGSERIAL | PK | |
 | user_id | BIGINT | FK → users NOT NULL | |
-| bind_type | VARCHAR(16) | NOT NULL | PHONE / EMAIL |
+| bind_type | VARCHAR(16) | NOT NULL, CHECK PHONE/EMAIL | PHONE / EMAIL |
 | bind_value | VARCHAR(128) | NOT NULL | 手机号 / 邮箱 |
-| verified | BOOLEAN | DEFAULT false | 是否已验证 |
-| created_at | TIMESTAMPTZ | | |
+| verified | BOOLEAN | NOT NULL DEFAULT false | 是否已验证 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT now() | |
 | — | — | UNIQUE(bind_type, bind_value) | 一个手机号/邮箱只能绑一个账号 |
+| — | — | UNIQUE(user_id, bind_type) | 每个账号最多绑定一个手机号和一个邮箱 |
 
 **verification_codes 验证码表**
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | id | BIGSERIAL PK | |
-| scene | VARCHAR(24) | BIND_PHONE / BIND_EMAIL / RESET_PWD |
-| target | VARCHAR(128) | 手机号 / 邮箱 |
-| code_hash | VARCHAR(64) | 验证码哈希（不存明文） |
-| expires_at | TIMESTAMPTZ | 5 分钟有效 |
+| scene | VARCHAR(24) | NOT NULL，CHECK BIND_PHONE / BIND_EMAIL / RESET_PWD |
+| target | VARCHAR(128) | NOT NULL，手机号 / 邮箱 |
+| code_hash | VARCHAR(64) | NOT NULL，验证码哈希（不存明文） |
+| expires_at | TIMESTAMPTZ | NOT NULL，由业务设置 5 分钟有效期 |
 | used_at | TIMESTAMPTZ | 使用后置位 |
-| attempt_count | SMALLINT | 最多试错 5 次 |
-| created_at | TIMESTAMPTZ | |
+| attempt_count | SMALLINT | NOT NULL DEFAULT 0，CHECK 0~5，最多试错 5 次 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT now() |
 
 > 本地验证版：验证码「发送」走 Mock 通道，dev profile 下写入日志，方便本机调试。
 
@@ -194,11 +195,11 @@ users 1 ──── n verification_codes    （验证码, 实际按 target 关�
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | id | BIGSERIAL PK | |
-| user_id | BIGINT FK | |
-| token_hash | VARCHAR(64) | 存储 SHA-256 哈希 |
-| expires_at | TIMESTAMPTZ | 7 天 |
-| revoked | BOOLEAN | 登出/轮换后置 true |
-| created_at | TIMESTAMPTZ | |
+| user_id | BIGINT FK NOT NULL | 所属用户 |
+| token_hash | VARCHAR(64) | UNIQUE NOT NULL，存储 SHA-256 哈希 |
+| expires_at | TIMESTAMPTZ | NOT NULL，由业务设置 7 天有效期 |
+| revoked | BOOLEAN | NOT NULL DEFAULT false，登出/轮换后置 true |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT now() |
 
 **rental_records 租房记录表**（核心业务表）
 
@@ -213,16 +214,16 @@ users 1 ──── n verification_codes    （验证码, 实际按 target 关�
 | rental_platform | VARCHAR(64) | | 租赁平台：贝壳/自如/链家/个人房东… |
 | landlord_type | VARCHAR(16) | | 房东直租 / 二房东 / 中介 / 品牌公寓 |
 | room_type | VARCHAR(16) | | 整租 / 合租 / 主卧 / 次卧 |
-| monthly_rent | NUMERIC(10,2) | | 月租金（元） |
+| monthly_rent | NUMERIC(10,2) | CHECK >= 0 | 月租金（元） |
 | deposit_desc | VARCHAR(32) | | 押付方式，如「押一付三」 |
 | rent_start_date | DATE | | 入住日期 |
-| rent_end_date | DATE | | 搬离日期 |
+| rent_end_date | DATE | CHECK >= rent_start_date | 搬离日期 |
 | rating | SMALLINT | CHECK 1~5 | 综合体验评分 |
 | highlights | TEXT | | 优点 |
 | pitfalls | TEXT | | 踩坑/注意事项 |
 | content | TEXT | | 详细经验描述 |
-| status | SMALLINT | DEFAULT 1 | 1 已发布 / 0 已下架 |
-| created_at / updated_at | TIMESTAMPTZ | | |
+| status | SMALLINT | NOT NULL DEFAULT 1, CHECK 0/1 | 1 已发布 / 0 已下架 |
+| created_at / updated_at | TIMESTAMPTZ | NOT NULL DEFAULT now() | updated_at 由触发器维护 |
 | deleted_at | TIMESTAMPTZ | | 软删除 |
 
 **索引**
@@ -231,8 +232,12 @@ users 1 ──── n verification_codes    （验证码, 实际按 target 关�
 CREATE INDEX idx_rental_city_created  ON rental_records (city, created_at DESC);
 CREATE INDEX idx_rental_platform      ON rental_records (rental_platform);
 CREATE INDEX idx_rental_user          ON rental_records (user_id);
-CREATE INDEX idx_binding_value        ON user_bindings (bind_type, bind_value);
+CREATE INDEX idx_refresh_tokens_user  ON refresh_tokens (user_id);
+CREATE INDEX idx_verification_codes_scene_target_created
+    ON verification_codes (scene, target, created_at DESC);
 ```
+
+唯一约束自动创建索引，包括用户名、绑定类型/值、用户/绑定类型和刷新令牌哈希，不再重复建索引。外键限制删除仍有绑定、令牌或租房记录的用户；租房记录使用 `deleted_at` 软删除。所有业务表及字段均提供中文注释。
 
 ---
 
@@ -303,7 +308,9 @@ CREATE INDEX idx_binding_value        ON user_bindings (bind_type, bind_value);
 
 ## 9. Docker 部署与迁移
 
-**当前状态**：已提供可运行的 PostgreSQL 容器配置；后端 Maven 工程和前端源码尚未创建。第 5 节应用目录和 API 为待实现设计，当前没有可启动的后端/前端容器。
+**当前状态**：已提供 PostgreSQL、容器化 Flyway 和 V1 建表脚本；后端 Maven 工程和前端源码尚未创建。第 5 节应用目录和 API 为待实现设计，当前没有可启动的后端/前端容器。
+
+按顺序执行的 CLI 命令及作用见 [容器启动指南](DOCKER_STARTUP.md)。
 
 ### 9.1 启动数据库
 
@@ -313,12 +320,37 @@ CREATE INDEX idx_binding_value        ON user_bindings (bind_type, bind_value);
 cp .env.example .env
 # 编辑 .env，将 POSTGRES_PASSWORD 改为长随机密码。
 docker compose up -d --wait postgres
+docker compose --profile tools run --rm migrate
+docker compose --profile tools run --rm migrate validate
 docker compose ps
 ```
 
 本次本机安装已生成随机密码的 `.env`，无需再次复制模板。实际密码和备份文件均已加入 `.gitignore`，不会提交到 Git。
 
-配置见 `docker-compose.yml`：PostgreSQL 16、健康检查、自动重启和命名数据卷 `pgdata`。镜像使用 AWS 公共仓库中的 Docker 官方镜像 `public.ecr.aws/docker/library/postgres:16-alpine`，以避开本机访问 Docker Hub 的网络问题。数据卷独立于容器，重建容器或执行 `docker compose down` 都会保留数据。`docker compose down -v` 会删除数据卷，不用于日常停止服务。
+配置见 `docker-compose.yml`：PostgreSQL 16、健康检查、自动重启和命名数据卷 `pgdata`。数据卷独立于容器，重建容器或执行 `docker compose down` 都会保留数据。`docker compose down -v` 会删除数据卷，不用于日常停止服务。
+
+**镜像源**：默认使用 DaoCloud 国内镜像源 `docker.m.daocloud.io/library/postgres:16-alpine`。本机已验证拉取成功，镜像摘要与 AWS 公共仓库的 Docker 官方镜像一致。国内源不可用或迁移到其他网络环境时，在 `.env` 中设置 `POSTGRES_IMAGE=public.ecr.aws/docker/library/postgres:16-alpine`，也可使用官方地址 `POSTGRES_IMAGE=postgres:16-alpine`，然后重新拉取并启动：
+
+```bash
+docker compose pull postgres
+docker compose up -d --wait postgres
+```
+
+**初始化与版本化迁移**：Flyway 工具服务位于 `tools` profile，使用固定版本 `13.10.0-alpine`，支持 ARM64/AMD64，默认经 DaoCloud 拉取。需要切换来源时，在 `.env` 设置 `FLYWAY_IMAGE=flyway/flyway:13.10.0-alpine`。
+
+```bash
+docker compose --profile tools run --rm migrate
+docker compose --profile tools run --rm migrate validate
+docker compose --profile tools run --rm migrate info
+```
+
+以上依次执行待处理迁移、校验已执行脚本和查看版本历史。脚本目录为 `src/main/resources/db/migration`，只读挂载到迁移容器；数据库连接通过环境变量注入，密码不写入脚本。
+
+V1 创建 5 张业务表，Flyway 另建 `flyway_schema_history` 保存版本和校验和。重复执行 `migrate` 会跳过已成功执行的版本；后续改动新增 `V2__*.sql` 等脚本，已执行的 V1 保持不变。自动 baseline 和 `clean` 已禁用，已有未知表时不会自动认领或清空数据库。首次迁移前确认目标为空，后续迁移前检查已有历史。
+
+约束、默认值、字段注释和触发器的验证脚本为 `tests/database/verify_initial_schema.sql`，仅允许在 `rental_schema_test_*` 临时库执行，测试数据通过事务回滚。迁移和恢复数据时先在临时库验证，再操作业务库。
+
+镜像源通过项目配置切换。切换来源时核对镜像摘要和 CPU 架构，并保持相同的 PostgreSQL 主版本及数据卷；跨主版本升级需另行执行数据库升级或备份恢复流程。
 
 数据库名称、用户、密码和本机端口由 `.env` 配置，默认数据库/用户为 `rental`，地址为 `127.0.0.1:5432`。如端口冲突，可修改 `POSTGRES_PORT`。数据库默认只向本机开放，应用容器通过 Compose 内部网络连接。
 
@@ -345,7 +377,7 @@ SPRING_DATASOURCE_USERNAME=rental
 SPRING_DATASOURCE_PASSWORD=<与 .env 的 POSTGRES_PASSWORD 一致>
 ```
 
-容器内数据库主机名使用服务名 `postgres`。宿主机调试才使用 `localhost` 和 `.env` 中的 `POSTGRES_PORT`。后端数据库驱动使用 Maven 依赖 `org.postgresql:postgresql`，随应用镜像构建安装；不需要 Node.js 的 `pg` 包。表结构后续由 Flyway 管理。
+容器内数据库主机名使用服务名 `postgres`。宿主机调试才使用 `localhost` 和 `.env` 中的 `POSTGRES_PORT`。后端数据库驱动使用 Maven 依赖 `org.postgresql:postgresql`，随应用镜像构建安装；不需要 Node.js 的 `pg` 包。后端共用现有迁移脚本和 `flyway_schema_history`，JPA 使用 `ddl-auto: validate` 校验表结构。
 
 ### 9.3 备份与迁移
 
@@ -362,6 +394,8 @@ docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES
 ```bash
 docker compose exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --no-acl --exit-on-error' < backups/rental-YYYYMMDD-HHMMSS.dump
 ```
+
+恢复备份前仅启动目标机器的 PostgreSQL，保持目标数据库为空，先完成恢复，再执行 Flyway `validate` 和 `migrate`；不要在恢复前运行第 9.1 节的建表命令。备份包含业务结构、数据和 Flyway 版本历史。
 
 Git 不包含 `.env` 和备份，迁移时需单独配置/传输。命名数据卷不会随代码自动搬迁；跨机器、跨 CPU 架构迁移使用上述逻辑备份与恢复。切换机器前停止应用写入并做最后一次备份，恢复后验证数据再切换应用流量。
 

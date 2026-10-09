@@ -1,0 +1,8 @@
+.git
+.DS_Store
+.tools
+.env
+.env.*
+backups
+target
+node_modules
