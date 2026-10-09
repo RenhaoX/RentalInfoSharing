@@ -1,7 +1,7 @@
 # RentalInfoSharing 租房信息共享平台
 
-> 架构设计文档 v0.1 · 本机验证版（Local MVP）
-> 后端栈：Java 21 + Spring Boot 3.5.x + PostgreSQL · 前端选型待定（API First）
+> 架构与部署文档 v0.2 · 第一阶段基础工程已实现
+> 后端栈：Java 21 + Spring Boot 3.5.16 + MyBatis-Plus 3.5.17 + PostgreSQL 16 · 前端选型待定（API First）
 
 ---
 
@@ -9,11 +9,13 @@
 
 一个由用户共建的租房信息共享平台：用户填写自己**实际租住过**的房子（城市、地址、租赁平台、租期、体验与踩坑等），供其他人参考，减少信息差。
 
-**本阶段目标**：在本机跑通一套端到端验证版，覆盖「登录 → 信息绑定 → 租房信息填写/浏览」核心链路，验证产品形态后再决定前端选型与上线方案。
+**当前阶段已实现**：可启动的 Spring Boot 单模块 Maven 工程，接入现有 PostgreSQL、MyBatis-Plus、Flyway 13.10.0，提供统一响应、请求 traceId、全局异常处理和数据库健康检查。标准启动入口为 `docker compose up -d --build --wait`。
+
+**后续 MVP 目标**：覆盖「登录 → 信息绑定 → 租房信息填写/浏览」核心链路；下文认证、用户、租房接口及安全设计为后续规划，当前只实现健康检查接口。
 
 **设计原则**
 
-- API First：后端对外只暴露 REST + OpenAPI 文档，前端可随时替换（React / Vue / 小程序均可对接）。
+- API First：后端对外提供 REST，OpenAPI 文档后续接入，前端可随时替换（React / Vue / 小程序均可对接）。
 - 最小依赖：统一使用 Docker Compose 部署；当前外部服务只有 PostgreSQL，不引入 Redis / MQ / 对象存储。
 - 容器化部署（全项目强制准则）：所有当前及未来模块都通过容器部署，统一使用 Docker Compose 编排，构建工具与运行时也纳入镜像；宿主机只需 Docker 与 Docker Compose。
 - 生产可迁移：数据结构、鉴权、分层方式按可上线标准设计，验证成功后可平滑演进。
@@ -32,7 +34,7 @@
 | 信息绑定 | 绑定/解绑手机号、邮箱 | 验证码验证；手机号/邮箱可作登录凭证与联系方式 |
 | 租房信息 | 发布、编辑、删除、详情、列表筛选 | 核心字段：城市、地址、租赁平台、房东类型、租期、租金、体验评价 |
 | 个人中心 | 查看/修改昵称等基础资料 | 查看自己发布的记录 |
-| 通用能力 | 统一响应、统一异常、参数校验、OpenAPI 文档 | 所有接口具备 |
+| 通用能力 | 统一响应、统一异常、参数校验；OpenAPI 文档后续接入 | 基础能力已实现 |
 
 **明确不做（后续演进）**：图片上传、评论点赞、地图、举报审核、微信/短信真实通道、消息通知。
 
@@ -40,36 +42,20 @@
 
 ## 3. 总体架构
 
+```text
+前端（后续） → REST API → Controller → Service → Mapper → PostgreSQL 16
+                         统一响应 / 全局异常 / 参数校验 / traceId
 ```
-┌─────────────────────────────────────────────────────┐
-│                    前端（待定）                       │
-│        React / Vue / 小程序 · 通过 REST API 对接      │
-└──────────────────────┬──────────────────────────────┘
-                       │ HTTP (JSON) / JWT
-┌──────────────────────▼──────────────────────────────┐
-│                 Spring Boot 应用                     │
-│  ┌───────────┐  ┌───────────┐  ┌─────────────────┐  │
-│  │ JWT 过滤器 │→ │ Controller │→ │ Service（业务）  │  │
-│  └───────────┘  └───────────┘  └────────┬────────┘  │
-│       横切：统一响应 / 全局异常 / 参数校验 / 日志     │
-│                                ┌────────▼────────┐  │
-│                                │ Repository(JPA) │  │
-│                                └────────┬────────┘  │
-└─────────────────────────────────────────┼───────────┘
-                                          │ JDBC
-                                 ┌────────▼────────┐
-                                 │  PostgreSQL 16  │
-                                 │  (Docker 容器)   │
-                                 └─────────────────┘
-```
+
+JWT 鉴权和业务域属于后续阶段；当前健康检查经过同样的 Controller → Service → Mapper 分层。
 
 **分层职责**
 
 | 层 | 职责 | 约束 |
 | --- | --- | --- |
-| Controller | 参数接收与校验、鉴权注解、组装响应 | 不写业务逻辑，不直接访问 Repository |
+| Controller | 参数接收与校验、鉴权注解、组装响应 | 不写业务逻辑，不直接访问 Mapper |
 | Service | 业务逻辑、事务边界、权限判断 | 返回 DTO，不暴露 Entity |
-| Repository | 数据访问（Spring Data JPA） | 复杂查询可用 @Query 手写 JPQL |
+| Mapper | 数据访问（MyBatis-Plus） | CRUD 使用 BaseMapper，复杂查询使用 XML 或 SQL 注解 |
 | Entity/DTO | 持久化模型 / 传输模型 | 严格分离，避免直接序列化 Entity |
 
 ---
@@ -79,17 +65,17 @@
 | 类别 | 选型 | 理由 |
 | --- | --- | --- |
 | 语言 | Java 21（LTS） | 虚拟线程、记录类，Spring Boot 3.x 官方基线 |
-| 框架 | Spring Boot 3.5.x | 生态成熟，面试/维护友好 |
+| 框架 | Spring Boot 3.5.16 | 生态成熟，面试/维护友好 |
 | Web | Spring MVC + Jackson | REST 标准方案 |
-| 安全 | Spring Security + JWT（jjwt 0.12.x） | 无状态鉴权，前后端分离友好 |
-| ORM | Spring Data JPA (Hibernate) | 快速建模，复杂查询可回退原生 SQL |
+| 安全（后续） | Spring Security + JWT（jjwt 0.12.x） | 无状态鉴权，前后端分离友好 |
+| ORM | MyBatis-Plus 3.5.17 | 提供基础 CRUD 与 MyBatis SQL 映射 |
 | 数据库 | PostgreSQL 16（Docker） | 生产级，JSONB/数组等能力为后续扩展留空间 |
-| 迁移 | Flyway | 版本化 DDL，团队协作可追溯 |
+| 迁移 | Flyway 13.10.0 | 版本化 DDL，团队协作可追溯 |
 | 校验 | Jakarta Validation | 声明式参数校验 |
-| 文档 | springdoc-openapi 2.x | 自动生成 Swagger UI，前端联调依据 |
+| 文档（后续） | springdoc-openapi 2.x | 自动生成 Swagger UI，前端联调依据 |
 | 构建 | Maven（spring-boot-starter-parent） | 简单稳定 |
-| 测试 | JUnit 5 + MockMvc（单元）/ Testcontainers（集成，可选） | 保证核心链路可回归 |
-| 前端 | **待定** | 接口契约已由 OpenAPI 固化，后端先行不受影响 |
+| 测试 | JUnit 5 + MockMvc + Compose 实机验收 | 构建时执行测试，运行时验证真实 PostgreSQL 连接 |
+| 前端 | **待定** | 后端先行，接口按 REST 契约迭代 |
 
 ---
 
@@ -99,41 +85,32 @@
 
 ```
 RentalInfoSharing/
-├── README.md
-├── docker-compose.yml              # PostgreSQL 与 Flyway 迁移工具
-├── .env.example                    # 部署配置模板，实际密码放在 .env
-├── pom.xml
-└── src/main/java/com/rental/sharing/
-    ├── RentalInfoSharingApplication.java
-    ├── common/                     # 通用能力
-    │   ├── api/                    # ApiResponse、PageResult、错误码
-    │   ├── exception/              # BizException、全局异常处理
-    │   └── util/                   # 脱敏、时间等工具
-    ├── config/                     # SecurityConfig、OpenApiConfig、JacksonConfig
-    ├── auth/                       # 认证域
-    │   ├── controller/AuthController.java
-    │   ├── service/AuthService.java
-    │   ├── dto/                    # RegisterReq、LoginReq、TokenResp...
-    │   └── security/               # JwtProvider、JwtAuthFilter
-    ├── user/                       # 用户域
-    │   ├── controller/UserController.java
-    │   ├── controller/BindingController.java
-    │   ├── service/UserService.java
-    │   ├── service/BindingService.java
-    │   ├── entity/User.java / UserBinding.java / RefreshToken.java
-    │   ├── repository/
-    │   └── dto/
-    └── rental/                     # 租房信息域
-        ├── controller/RentalController.java
-        ├── service/RentalService.java
-        ├── entity/RentalRecord.java
-        ├── repository/RentalRecordRepository.java
-        └── dto/
-└── src/main/resources/
-    ├── application.yml             # 公共配置
-    ├── application-dev.yml         # 本机开发配置
-    └── db/migration/V1__init.sql   # Flyway 脚本
+├── pom.xml                         # Java 21 / Spring Boot / MyBatis-Plus
+├── Dockerfile                      # Maven 构建（含测试）+ JRE 运行
+├── .dockerignore                   # 排除密钥、备份和本地构建产物
+├── docker-compose.yml              # PostgreSQL + backend，迁移工具位于 tools profile
+├── .env.example                    # 外置配置模板
+├── README.md / DOCKER_STARTUP.md
+├── src/main/java/com/rental/sharing/
+│   ├── RentalInfoSharingApplication.java
+│   ├── common/
+│   │   ├── api/                    # ApiResponse、ErrorCode
+│   │   ├── exception/              # BusinessException、GlobalExceptionHandler
+│   │   └── web/                    # TraceIdFilter
+│   ├── config/                     # MybatisPlusConfig：扫描 @Mapper
+│   └── health/
+│       ├── controller/             # GET /api/v1/health
+│       ├── service/                # 数据库连通性检查
+│       ├── mapper/                 # SELECT 1，经 MyBatis-Plus 数据访问链路
+│       └── dto/                    # HealthStatus
+├── src/main/resources/
+│   ├── application.yml             # 数据源、Flyway、MyBatis-Plus 和日志
+│   └── db/migration/V1__init.sql    # 原 PostgreSQL 脚本，内容保持不变
+├── src/test/java/                  # 健康接口、异常和参数校验测试
+└── tests/database/verify_initial_schema.sql
 ```
+
+后续按功能域增加 `auth`、`user`、`rental` 包，每个域使用 controller/service/mapper/entity/dto 分层；当前不添加尚未实现的业务接口。
 
 ---
 
@@ -286,7 +263,7 @@ CREATE INDEX idx_verification_codes_scene_target_created
 | DELETE | /{id} | 软删除（仅发布者） |
 | GET | /mine | 我发布的记录 |
 
-> 启动后可访问 `http://localhost:8080/swagger-ui.html` 查看完整 OpenAPI 文档。
+> 以上业务接口和 Swagger UI 尚未实现；当前可用接口为 `GET /api/v1/health`，详见第 9 节。
 
 ---
 
@@ -308,96 +285,96 @@ CREATE INDEX idx_verification_codes_scene_target_created
 
 ## 9. Docker 部署与迁移
 
-**当前状态**：已提供 PostgreSQL、容器化 Flyway 和 V1 建表脚本；后端 Maven 工程和前端源码尚未创建。第 5 节应用目录和 API 为待实现设计，当前没有可启动的后端/前端容器。
+完整命令及说明见 [容器启动指南](DOCKER_STARTUP.md)。宿主机只需 Docker 与 Docker Compose，不需要本地 Java、Maven 或 PostgreSQL。
 
-按顺序执行的 CLI 命令及作用见 [容器启动指南](DOCKER_STARTUP.md)。
+### 9.1 启动与验收
 
-### 9.1 启动数据库
-
-宿主机安装 Docker 与 Docker Compose 即可。首次在新机器部署时：
+首次在新机器部署：
 
 ```bash
 cp .env.example .env
 # 编辑 .env，将 POSTGRES_PASSWORD 改为长随机密码。
-docker compose up -d --wait postgres
-docker compose --profile tools run --rm migrate
-docker compose --profile tools run --rm migrate validate
+chmod 600 .env
+docker compose config --quiet
+docker compose up -d --build --wait
 docker compose ps
+curl --fail http://localhost:8080/api/v1/health
 ```
 
-本次本机安装已生成随机密码的 `.env`，无需再次复制模板。实际密码和备份文件均已加入 `.gitignore`，不会提交到 Git。
+已有 `.env` 时保留原文件，参照模板补充缺少的应用配置。本机沿用原 PostgreSQL 账号密码、容器服务名 `postgres` 和 `pgdata` 数据卷。数据库与应用端口默认只绑定 `127.0.0.1`，分别通过 `POSTGRES_PORT` 和 `APP_PORT` 调整。
 
-配置见 `docker-compose.yml`：PostgreSQL 16、健康检查、自动重启和命名数据卷 `pgdata`。数据卷独立于容器，重建容器或执行 `docker compose down` 都会保留数据。`docker compose down -v` 会删除数据卷，不用于日常停止服务。
+健康接口通过 Mapper 实际执行 `SELECT 1`。连接成功时返回 HTTP 200：
 
-**镜像源**：默认使用 DaoCloud 国内镜像源 `docker.m.daocloud.io/library/postgres:16-alpine`。本机已验证拉取成功，镜像摘要与 AWS 公共仓库的 Docker 官方镜像一致。国内源不可用或迁移到其他网络环境时，在 `.env` 中设置 `POSTGRES_IMAGE=public.ecr.aws/docker/library/postgres:16-alpine`，也可使用官方地址 `POSTGRES_IMAGE=postgres:16-alpine`，然后重新拉取并启动：
-
-```bash
-docker compose pull postgres
-docker compose up -d --wait postgres
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": { "status": "UP", "database": "UP" },
+  "traceId": "e2f1..."
+}
 ```
 
-**初始化与版本化迁移**：Flyway 工具服务位于 `tools` profile，使用固定版本 `13.10.0-alpine`，支持 ARM64/AMD64，默认经 DaoCloud 拉取。需要切换来源时，在 `.env` 设置 `FLYWAY_IMAGE=flyway/flyway:13.10.0-alpine`。
+数据库不可用时返回 HTTP 503，`code=50300`、`message="数据库暂时不可用"`、`data=null`；未知接口返回 HTTP 404 / `code=40400`。每个请求生成 traceId，同时写入响应体、`X-Trace-Id` 响应头和日志；异常详情记录在服务端，响应不暴露堆栈或连接信息。
+
+backend 等待 PostgreSQL healthy 后启动，Flyway 自动校验并迁移，然后由 HTTP 健康检查判断应用和数据库整体是否就绪。迁移失败时应用启动失败。镜像构建执行 `mvn verify`（含测试），最终以非 root 用户运行 JRE 和 JAR。
+
+IDE 调试时使用 Java 21，并设置 `SPRING_DATASOURCE_USERNAME`、`SPRING_DATASOURCE_PASSWORD` 和 `SPRING_DATASOURCE_URL`（例如 `jdbc:postgresql://localhost:5432/rental?connectTimeout=3&socketTimeout=5`）；Spring Boot 不会自动读取根目录 `.env`。
+
+### 9.2 数据源与 Flyway
+
+应用容器连接 `postgres:5432`；宿主机数据库工具使用 `127.0.0.1` 和 `.env` 中的 `POSTGRES_PORT`。账号默认 `rental`，密码从 `.env` 注入，不写入代码或镜像。
+
+Flyway 13.10.0 扫描 `classpath:db/migration`，沿用原 V1 脚本及 `public.flyway_schema_history`。已执行的 V1 只校验，不重复建表；后续变更新增 `V2__*.sql`，不要修改已执行的迁移。自动 baseline 和 clean 已禁用，不自动认领或清空未知数据库。
 
 ```bash
-docker compose --profile tools run --rm migrate
+docker compose exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "SELECT current_database(), current_user, version();" -c "SELECT version, description, checksum, success FROM public.flyway_schema_history;"'
 docker compose --profile tools run --rm migrate validate
 docker compose --profile tools run --rm migrate info
 ```
 
-以上依次执行待处理迁移、校验已执行脚本和查看版本历史。脚本目录为 `src/main/resources/db/migration`，只读挂载到迁移容器；数据库连接通过环境变量注入，密码不写入脚本。
+后端启动时自动执行迁移，无需每次另跑 migrate。容器化迁移工具保留在 `tools` profile，版本与后端一致，可用于独立校验或临时库验证。
 
-V1 创建 5 张业务表，Flyway 另建 `flyway_schema_history` 保存版本和校验和。重复执行 `migrate` 会跳过已成功执行的版本；后续改动新增 `V2__*.sql` 等脚本，已执行的 V1 保持不变。自动 baseline 和 `clean` 已禁用，已有未知表时不会自动认领或清空数据库。首次迁移前确认目标为空，后续迁移前检查已有历史。
+命名数据卷 `pgdata` 独立保存数据库，容器重建或 `docker compose down` 后数据仍保留。初始化变量仅在空数据卷首次启动时创建数据库与账号；已有数据后修改 `.env` 不会自动更新库内密码。
 
-约束、默认值、字段注释和触发器的验证脚本为 `tests/database/verify_initial_schema.sql`，仅允许在 `rental_schema_test_*` 临时库执行，测试数据通过事务回滚。迁移和恢复数据时先在临时库验证，再操作业务库。
+约束、默认值、字段注释和触发器验证脚本为 `tests/database/verify_initial_schema.sql`，仅允许在 `rental_schema_test_*` 临时库执行，测试数据通过事务回滚。
 
-镜像源通过项目配置切换。切换来源时核对镜像摘要和 CPU 架构，并保持相同的 PostgreSQL 主版本及数据卷；跨主版本升级需另行执行数据库升级或备份恢复流程。
+### 9.3 备份、恢复与跨机器迁移
 
-数据库名称、用户、密码和本机端口由 `.env` 配置，默认数据库/用户为 `rental`，地址为 `127.0.0.1:5432`。如端口冲突，可修改 `POSTGRES_PORT`。数据库默认只向本机开放，应用容器通过 Compose 内部网络连接。
-
-`POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD` 仅在空数据卷首次初始化时创建数据库与账号。已有数据后修改 `.env` 不会自动修改库内密码，需通过 SQL 修改并同步应用配置。
-
-常用命令：
+备份包含业务结构、数据与 Flyway 历史。备份前停止应用写入，数据库继续运行：
 
 ```bash
-docker compose logs -f postgres
-docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
-docker compose stop
-docker compose up -d --wait postgres
-```
-
-### 9.2 后续应用模块的部署方式
-
-后端采用 Java 21 多阶段 Docker 构建，在构建容器内运行 Maven，最终镜像只包含 JRE 和应用 JAR；前端选型后也添加独立 Dockerfile 和 Compose 服务。认证、用户、租房信息目前设计为同一个 Spring Boot 应用内的功能模块，随同一个后端容器部署。
-
-后端容器通过以下环境变量连接数据库，并通过 `depends_on` 的 `service_healthy` 条件等待 PostgreSQL 就绪：
-
-```dotenv
-SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/rental
-SPRING_DATASOURCE_USERNAME=rental
-SPRING_DATASOURCE_PASSWORD=<与 .env 的 POSTGRES_PASSWORD 一致>
-```
-
-容器内数据库主机名使用服务名 `postgres`。宿主机调试才使用 `localhost` 和 `.env` 中的 `POSTGRES_PORT`。后端数据库驱动使用 Maven 依赖 `org.postgresql:postgresql`，随应用镜像构建安装；不需要 Node.js 的 `pg` 包。后端共用现有迁移脚本和 `flyway_schema_history`，JPA 使用 `ddl-auto: validate` 校验表结构。
-
-### 9.3 备份与迁移
-
-在源机器项目目录中备份数据库（每次保存为独立文件）：
-
-```bash
+docker compose stop backend
 mkdir -p backups
 backup_file="backups/rental-$(date +%Y%m%d-%H%M%S).dump"
 docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$backup_file"
+docker compose up -d --build --wait
 ```
 
-将项目文件和生成的 `.dump` 文件搬到目标机器，按 9.1 节配置 `.env` 并启动 PostgreSQL，再恢复到一个空数据库（将文件名替换为实际备份名）：
+检查命令退出码和备份文件非空后，搬迁项目代码、编排文件和备份。`.env` 和备份不提交到 Git，目标机器单独配置密码。命名数据卷不会随代码搬迁，跨机器及 ARM64/AMD64 迁移使用逻辑备份。
+
+目标机器先配置 `.env`，只启动 PostgreSQL，确认数据库为空后恢复；不要先启动 backend 创建表：
 
 ```bash
+docker compose up -d --wait postgres
 docker compose exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --no-acl --exit-on-error' < backups/rental-YYYYMMDD-HHMMSS.dump
+docker compose up -d --build --wait
+curl --fail http://localhost:8080/api/v1/health
 ```
 
-恢复备份前仅启动目标机器的 PostgreSQL，保持目标数据库为空，先完成恢复，再执行 Flyway `validate` 和 `migrate`；不要在恢复前运行第 9.1 节的建表命令。备份包含业务结构、数据和 Flyway 版本历史。
+恢复后核对表数量、关键数据、Flyway 历史和接口状态，再切换流量。日常停止使用 `docker compose stop` 或 `docker compose down`；`down -v` 会删除数据卷，不能用于普通重启。
 
-Git 不包含 `.env` 和备份，迁移时需单独配置/传输。命名数据卷不会随代码自动搬迁；跨机器、跨 CPU 架构迁移使用上述逻辑备份与恢复。切换机器前停止应用写入并做最后一次备份，恢复后验证数据再切换应用流量。
+### 9.4 镜像来源
+
+默认使用 DaoCloud，运行时与依赖采用明确版本，镜像支持 ARM64 / AMD64。其他网络环境可在 `.env` 中设置同版本官方来源：
+
+```dotenv
+POSTGRES_IMAGE=postgres:16-alpine
+FLYWAY_IMAGE=flyway/flyway:13.10.0-alpine
+MAVEN_IMAGE=maven:3.9.11-eclipse-temurin-21
+JAVA_IMAGE=eclipse-temurin:21.0.12.1_1-jre
+```
+
+PostgreSQL、Maven 和 Java 镜像也可使用 `public.ecr.aws/docker/library/` 前缀。本机 Maven 与 Java 已使用此备用来源。部署路径相对于项目目录，不依赖本机用户路径或运行时。切换镜像来源时保持 PostgreSQL 主版本为 16，并继续使用原数据卷；跨主版本升级应另外制定数据库升级或备份恢复流程。
 
 ---
 
@@ -405,7 +382,7 @@ Git 不包含 `.env` 和备份，迁移时需单独配置/传输。命名数据�
 
 | 阶段 | 内容 | 产出 | 预估 |
 | --- | --- | --- | --- |
-| M0 | 工程脚手架：Maven、Docker Compose、Flyway V1、统一响应/异常、OpenAPI | 服务可启动，健康检查通过 | 0.5 天 |
+| M0（已实现） | Maven、Docker Compose、PostgreSQL、MyBatis-Plus、Flyway V1、统一响应/异常、健康检查 | 服务可启动，健康检查通过；OpenAPI 后续补充 | 已完成 |
 | M1 | 认证：注册、登录、JWT 过滤器、刷新、登出 | 全链路可拿到令牌访问受保护接口 | 1 天 |
 | M2 | 信息绑定：验证码 Mock 通道、绑定/解绑、登录凭证扩展 | 手机号/邮箱可绑定并用于登录 | 1 天 |
 | M3 | 租房信息：CRUD、分页筛选、归属校验、地址脱敏 | 核心业务闭环 | 1.5 天 |
@@ -420,8 +397,8 @@ Git 不包含 `.env` 和备份，迁移时需单独配置/传输。命名数据�
 3. **检索增强**：城市/区县/平台/价格区间多条件组合筛选；后期引入 Elasticsearch 或 PG 全文检索。
 4. **地图能力**：地址地理编码，地图聚合展示（高德/腾讯地图）。
 5. **账号体系**：微信/支付宝第三方登录，真实短信/邮件通道。
-6. **工程化**：在现有 Docker Compose 基础上接入后端/前端镜像，后续增加 Redis 缓存与限流、CI/CD、日志与监控（Actuator + Prometheus）。
+6. **工程化**：在现有 Docker Compose 基础上接入前端镜像，后续增加 Redis 缓存与限流、CI/CD、日志与监控（Actuator + Prometheus）。
 
 ---
 
-*本文档为 v0.1 验证版设计，随开发推进持续更新。*
+*本文档区分已实现基础工程与后续业务规划，随开发推进持续更新。*
