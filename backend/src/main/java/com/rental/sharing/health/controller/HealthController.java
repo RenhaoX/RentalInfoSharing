@@ -8,7 +8,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 应用及数据库健康检查入口，同时供 Docker Compose 判断后端是否就绪。
+ * 应用及数据库健康检查入口，同时供 Docker Compose 判断后端是否准备就绪。
  */
 @RestController
 @RequestMapping("/api/v1/health")
