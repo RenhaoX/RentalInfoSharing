@@ -1,0 +1,10 @@
+.git
+.DS_Store
+.idea
+.tools
+.env
+.env.*
+backups
+target
+node_modules
+*.md
