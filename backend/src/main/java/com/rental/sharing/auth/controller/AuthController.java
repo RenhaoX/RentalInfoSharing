@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/auth")
 public class AuthController {
+
     private final AuthService authService;
     private final UserService userService;
 
@@ -30,25 +31,40 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public ResponseEntity<ApiResponse<UserInfo>> register(@Valid @RequestBody CredentialsRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(userService.register(request)));
+    public ResponseEntity<ApiResponse<UserInfo>> register(
+            @Valid @RequestBody CredentialsRequest request) {
+        UserInfo registeredUser = userService.register(request);
+
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success(registeredUser));
     }
 
     @PostMapping("/login")
-    public ResponseEntity<ApiResponse<TokenResponse>> login(@Valid @RequestBody CredentialsRequest request) {
-        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(ApiResponse.success(authService.login(request)));
+    public ResponseEntity<ApiResponse<TokenResponse>> login(
+            @Valid @RequestBody CredentialsRequest request) {
+        TokenResponse tokens = authService.login(request);
+
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(ApiResponse.success(tokens));
     }
 
     @PostMapping("/refresh")
-    public ResponseEntity<ApiResponse<TokenResponse>> refresh(@Valid @RequestBody RefreshTokenRequest request) {
-        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
-                .body(ApiResponse.success(authService.refresh(request.refreshToken())));
+    public ResponseEntity<ApiResponse<TokenResponse>> refresh(
+            @Valid @RequestBody RefreshTokenRequest request) {
+        TokenResponse refreshedTokens = authService.refresh(request.refreshToken());
+
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(ApiResponse.success(refreshedTokens));
     }
 
     @PostMapping("/logout")
-    public ApiResponse<Void> logout(@AuthenticationPrincipal AuthenticatedUser user,
-                                     @Valid @RequestBody RefreshTokenRequest request) {
+    public ApiResponse<Void> logout(
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @Valid @RequestBody RefreshTokenRequest request) {
         authService.logout(user.userId(), request.refreshToken());
+
         return ApiResponse.success(null);
     }
 }

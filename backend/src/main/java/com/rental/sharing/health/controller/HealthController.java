@@ -23,6 +23,8 @@ public class HealthController {
     /** 数据库查询成功返回 HTTP 200；不可用时由全局异常处理器返回 HTTP 503。 */
     @GetMapping
     public ApiResponse<HealthStatus> health() {
-        return ApiResponse.success(healthService.check());
+        HealthStatus healthStatus = healthService.check();
+
+        return ApiResponse.success(healthStatus);
     }
 }
