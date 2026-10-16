@@ -25,7 +25,7 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: .
       args:
         MAVEN_IMAGE: ${MAVEN_IMAGE:-docker.m.daocloud.io/library/maven:3.9.11-eclipse-temurin-21}
         JAVA_IMAGE: ${JAVA_IMAGE:-docker.m.daocloud.io/library/eclipse-temurin:21.0.12.1_1-jre}
@@ -82,14 +82,15 @@ services:
     image: ${MAVEN_IMAGE:-docker.m.daocloud.io/library/maven:3.9.11-eclipse-temurin-21}
     profiles: ["test"]
     working_dir: /workspace
-    command: ["mvn", "--batch-mode", "--no-transfer-progress", "-Dtest=AuthFlowTest", "test"]
+    # 构建 app 及其依赖，运行认证、房屋信息 HTTP 集成测试及架构边界检查。
+    command: ["mvn", "--batch-mode", "--no-transfer-progress", "-pl", "app", "-am", "test"]
     environment:
       AUTH_INTEGRATION_TEST: "true"
       AUTH_TEST_DATABASE_URL: jdbc:postgresql://auth-test-postgres:5432/rental_schema_test_auth?connectTimeout=3&socketTimeout=5
       AUTH_TEST_DATABASE_USERNAME: ${POSTGRES_USER:-rental}
       AUTH_TEST_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置数据库密码}
     volumes:
-      - ./backend:/workspace
+      - .:/workspace
       - auth-test-maven-cache:/root/.m2
     depends_on:
       auth-test-postgres:
@@ -112,7 +113,7 @@ services:
       FLYWAY_CONNECT_RETRIES: "10"
     volumes:
       # 只读挂载与后端相同的迁移目录，共用数据库中的 Flyway 版本历史。
-      - ./backend/src/main/resources/db/migration:/flyway/sql:ro
+      - ./app/src/main/resources/db/migration:/flyway/sql:ro
     depends_on:
       postgres:
         condition: service_healthy

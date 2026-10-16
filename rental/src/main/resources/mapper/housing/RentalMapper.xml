@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.rental.sharing.rental.housing.mapper.RentalMapper">
+    <!-- RETURNING 获得数据库生成的主键；affectData 确保以写操作管理事务及缓存。 -->
+    <select id="insert" resultType="long" affectData="true" flushCache="true">
+        INSERT INTO public.rental_records (
+            user_id, city, district, address, community_name, rental_platform, landlord_type,
+            room_type, monthly_rent, deposit_desc, rent_start_date, rent_end_date,
+            rating, highlights, pitfalls, content
+        ) VALUES (
+            #{userId}, #{record.city}, #{record.district}, #{record.address}, #{record.communityName},
+            #{record.rentalPlatform}, #{record.landlordType}, #{record.roomType}, #{record.monthlyRent},
+            #{record.depositDesc}, #{record.rentStartDate}, #{record.rentEndDate},
+            #{record.rating}, #{record.highlights}, #{record.pitfalls}, #{record.content}
+        ) RETURNING id
+    </select>
+
+    <!-- PUT 完整替换，显式赋值 NULL，避免可选字段无法清空。 -->
+    <update id="replaceOwned">
+        UPDATE public.rental_records SET
+            city = #{record.city}, district = #{record.district}, address = #{record.address},
+            community_name = #{record.communityName}, rental_platform = #{record.rentalPlatform},
+            landlord_type = #{record.landlordType}, room_type = #{record.roomType},
+            monthly_rent = #{record.monthlyRent}, deposit_desc = #{record.depositDesc},
+            rent_start_date = #{record.rentStartDate}, rent_end_date = #{record.rentEndDate},
+            rating = #{record.rating}, highlights = #{record.highlights},
+            pitfalls = #{record.pitfalls}, content = #{record.content}
+        WHERE id = #{id} AND user_id = #{userId} AND deleted_at IS NULL
+    </update>
+
+    <update id="deleteOwned">
+        UPDATE public.rental_records SET deleted_at = now()
+        WHERE id = #{id} AND user_id = #{userId} AND deleted_at IS NULL
+    </update>
+
+    <select id="findUndeletedOwner" resultType="long">
+        SELECT user_id FROM public.rental_records WHERE id = #{id} AND deleted_at IS NULL
+    </select>
+
+    <sql id="filters">
+        AND deleted_at IS NULL
+        <if test="query.city != null">AND city = #{query.city}</if>
+        <if test="query.district != null">AND district = #{query.district}</if>
+        <if test="query.rentalPlatform != null">AND rental_platform = #{query.rentalPlatform}</if>
+        <if test="query.landlordType != null">AND landlord_type = #{query.landlordType}</if>
+        <if test="query.roomType != null">AND room_type = #{query.roomType}</if>
+        <if test="query.minRent != null">AND monthly_rent &gt;= #{query.minRent}</if>
+        <if test="query.maxRent != null">AND monthly_rent &lt;= #{query.maxRent}</if>
+        <if test="query.minRating != null">AND rating &gt;= #{query.minRating}</if>
+        <if test="query.keyword != null">
+            AND (community_name LIKE #{query.keywordPattern} ESCAPE '!'
+                OR highlights LIKE #{query.keywordPattern} ESCAPE '!'
+                OR pitfalls LIKE #{query.keywordPattern} ESCAPE '!'
+                OR content LIKE #{query.keywordPattern} ESCAPE '!')
+        </if>
+    </sql>
+
+    <sql id="publicColumns">
+        id, city, district, community_name, rental_platform, landlord_type, room_type,
+        monthly_rent, deposit_desc, rent_start_date, rent_end_date, rating,
+        highlights, pitfalls, content, created_at, updated_at
+    </sql>
+
+    <select id="count" resultType="long">
+        SELECT count(*) FROM public.rental_records
+        <where>
+            <choose>
+                <when test="userId != null">user_id = #{userId}</when>
+                <otherwise>status = 1</otherwise>
+            </choose>
+            <include refid="filters"/>
+        </where>
+    </select>
+
+    <select id="listPublished" resultType="com.rental.sharing.rental.housing.dto.PublicRental">
+        SELECT <include refid="publicColumns"/> FROM public.rental_records
+        WHERE status = 1 <include refid="filters"/>
+        ORDER BY created_at DESC, id DESC LIMIT #{query.size} OFFSET #{query.offset}
+    </select>
+
+    <select id="listOwned" resultType="com.rental.sharing.rental.housing.dto.OwnedRental">
+        SELECT <include refid="publicColumns"/>, address, status FROM public.rental_records
+        WHERE user_id = #{userId} <include refid="filters"/>
+        ORDER BY created_at DESC, id DESC LIMIT #{query.size} OFFSET #{query.offset}
+    </select>
+</mapper>

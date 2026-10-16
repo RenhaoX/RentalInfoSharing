@@ -1,8 +1,8 @@
 # 容器启动 CLI 指南
 
-当前服务为 PostgreSQL 与 Spring Boot backend，Flyway 迁移工具位于 `tools` profile。构建和运行均在容器中完成，部署机器只需 Docker 与 Docker Compose。后端源码与构建文件位于 `backend/`，以下命令均在项目根目录执行。
+当前服务为 PostgreSQL 与 Spring Boot backend，Flyway 迁移工具位于 `tools` profile。构建和运行均在容器中完成，部署机器只需 Docker 与 Docker Compose。根目录父工程直接包含 `common`、`identity`、`rental`、`app` 四个 Maven 模块，Dockerfile 和构建上下文也位于根目录。只有 `app` 生成可执行包，仍由一个 backend 容器运行。以下命令均在项目根目录执行。
 
-统一认证接口测试在 `backend/src/test/`，使用独立 `test` profile。准备好 `.env` 后执行 `docker compose --profile test run --rm auth-test`；命令会自动等待测试 PostgreSQL 健康。覆盖范围、测试数据清理和 IDE 配置见 [统一接口测试](../README.md#72-统一接口测试)。
+认证、用户端房屋信息和模块架构测试在 `app/src/test/`，使用独立 `test` profile。准备好 `.env` 后执行 `docker compose --profile test run --rm auth-test`；沿用原服务名，命令执行 `mvn -pl app -am test`，从根目录父工程构建 app 及其依赖模块，并自动等待测试 PostgreSQL 健康。共24项测试，覆盖认证、房屋增改查删、权限与地址隐私、筛选分页及模块依赖。每个用例清理自身房屋记录、刷新令牌和账号；不会连接业务数据库。详细范围和 IDE 配置见 [统一接口测试](../README.md#72-统一接口测试)。
 
 ## 一、首次启动
 
@@ -68,9 +68,9 @@ docker compose up -d --build --wait
 docker compose ps
 ```
 
-`config --quiet` 检查配置但不输出展开后的密码。`--build` 在 Maven 容器中执行 `mvn verify`，编译并打包后生成应用镜像；`--wait` 等待数据库及应用健康检查通过。首次需要下载镜像及 Maven 依赖，后续使用缓存。
+`config --quiet` 检查配置但不输出展开后的密码。`--build` 在 Maven 容器中执行 `mvn -pl app -am verify`，构建依赖模块、运行 ArchUnit 架构检查，并将 `app/target/rental-info-sharing.jar` 放入运行镜像；数据库集成测试由 test profile 单独运行。`--wait` 等待数据库及应用健康检查通过。首次需要下载镜像及 Maven 依赖，后续使用缓存。
 
-启动顺序为：PostgreSQL 就绪 → backend 启动 → Flyway 校验及迁移 → HTTP 健康检查。Flyway 由后端启动时自动运行，原 V1 脚本和 `public.flyway_schema_history` 保持不变，已成功执行的迁移只校验，不重复建表。
+启动顺序为：PostgreSQL 就绪 → backend 启动 → Flyway 校验及迁移 → HTTP 健康检查。Flyway 由后端启动时自动运行，迁移文件统一位于 `app/src/main/resources/db/migration/`，tools profile 的迁移工具挂载同一目录。房屋信息功能复用现有 `rental_records` 表和索引，不新增迁移。原 V1 内容和 `public.flyway_schema_history` 保持不变，已成功执行的迁移只校验，不重复建表。本次不增加服务或环境变量，已有 `.env` 和命名数据卷可继续使用。
 
 ## 二、验收
 
