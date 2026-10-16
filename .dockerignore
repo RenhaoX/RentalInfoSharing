@@ -6,6 +6,7 @@
 .env.*
 backups
 target
+**/target
 node_modules
-tests
+**/node_modules
 *.md

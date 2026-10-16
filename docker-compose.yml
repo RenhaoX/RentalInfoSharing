@@ -37,6 +37,12 @@ services:
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-rental}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置数据库密码}
       SERVER_PORT: "8080"
+      AUTH_SIGNING_KEY: ${AUTH_SIGNING_KEY:?请在 .env 中设置Base64编码的JWT随机签名密钥}
+      AUTH_ISSUER: ${AUTH_ISSUER:-rental-info-sharing}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-rental-info-sharing-api}
+      AUTH_ACCESS_TOKEN_TTL: ${AUTH_ACCESS_TOKEN_TTL:-30m}
+      AUTH_REFRESH_TOKEN_TTL: ${AUTH_REFRESH_TOKEN_TTL:-7d}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
     depends_on:
@@ -51,6 +57,44 @@ services:
       retries: 10
       start_period: 30s
     stop_grace_period: 30s
+
+  auth-test-postgres:
+    image: ${POSTGRES_IMAGE:-docker.m.daocloud.io/library/postgres:16-alpine}
+    profiles: ["test"]
+    environment:
+      POSTGRES_DB: rental_schema_test_auth
+      POSTGRES_USER: ${POSTGRES_USER:-rental}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置数据库密码}
+    ports:
+      # IDEA 在宿主机运行测试时连接此端口，容器测试仍使用服务名。
+      - "127.0.0.1:${AUTH_TEST_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      # 与业务 pgdata 分开，仅用于接口测试。
+      - auth-test-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+    stop_grace_period: 30s
+
+  auth-test:
+    image: ${MAVEN_IMAGE:-docker.m.daocloud.io/library/maven:3.9.11-eclipse-temurin-21}
+    profiles: ["test"]
+    working_dir: /workspace
+    # 构建 app 及其依赖，运行认证、房屋信息 HTTP 集成测试及架构边界检查。
+    command: ["mvn", "--batch-mode", "--no-transfer-progress", "-pl", "app", "-am", "test"]
+    environment:
+      AUTH_INTEGRATION_TEST: "true"
+      AUTH_TEST_DATABASE_URL: jdbc:postgresql://auth-test-postgres:5432/rental_schema_test_auth?connectTimeout=3&socketTimeout=5
+      AUTH_TEST_DATABASE_USERNAME: ${POSTGRES_USER:-rental}
+      AUTH_TEST_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置数据库密码}
+    volumes:
+      - .:/workspace
+      - auth-test-maven-cache:/root/.m2
+    depends_on:
+      auth-test-postgres:
+        condition: service_healthy
 
   migrate:
     # 独立迁移工具按需运行；日常 up 不启用 tools profile，避免与后端同时迁移。
@@ -69,10 +113,12 @@ services:
       FLYWAY_CONNECT_RETRIES: "10"
     volumes:
       # 只读挂载与后端相同的迁移目录，共用数据库中的 Flyway 版本历史。
-      - ./src/main/resources/db/migration:/flyway/sql:ro
+      - ./app/src/main/resources/db/migration:/flyway/sql:ro
     depends_on:
       postgres:
         condition: service_healthy
 
 volumes:
   pgdata:
+  auth-test-data:
+  auth-test-maven-cache:
